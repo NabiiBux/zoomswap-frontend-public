@@ -1,0 +1,123 @@
+import React, { useMemo, useState, useCallback } from 'react'
+import BigNumber from 'bignumber.js'
+import styled from 'styled-components'
+import { provider } from 'web3-core'
+import { getContract } from 'utils/erc20'
+import { Button, Flex, Text } from '@zoomswap-libs/uikit'
+import { Farm } from 'state/types'
+import { useFarmFromPid, useFarmFromSymbol, useFarmUser } from 'state/hooks'
+import useI18n from 'hooks/useI18n'
+import UnlockButton from 'components/UnlockButton'
+import { useApprove } from 'hooks/useApprove'
+import StakeAction from './StakeAction'
+import HarvestAction from './HarvestAction'
+import MigrationAction from './MigrationAction'
+
+const Action = styled.div`
+  padding-top: 16px;
+`
+export interface FarmWithStakedValue extends Farm {
+  apy?: BigNumber
+}
+
+interface FarmCardActionsProps {
+  farm: FarmWithStakedValue
+  showMigrate?: boolean
+  ethereum?: provider
+  account?: string
+}
+
+const CardActions: React.FC<FarmCardActionsProps> = ({ farm, ethereum, account, showMigrate }) => {
+  const TranslateString = useI18n()
+  const [requestedApproval, setRequestedApproval] = useState(false)
+  const { pid, lpAddresses, tokenAddresses, isTokenOnly, depositFeeBP } = useFarmFromPid(farm.pid)
+  const { allowance, tokenBalance, stakedBalance, stakedBalanceV1, earnings } = useFarmUser(pid)
+  const lpAddress = lpAddresses[process.env.REACT_APP_CHAIN_ID]
+  const tokenAddress = tokenAddresses[process.env.REACT_APP_CHAIN_ID]
+  const lpName = farm.lpSymbol.toUpperCase()
+  const isApproved = account && allowance && allowance.isGreaterThan(0)
+
+  const lpContract = useMemo(() => {
+    if (isTokenOnly) {
+      return getContract(ethereum as provider, tokenAddress)
+    }
+    return getContract(ethereum as provider, lpAddress)
+  }, [ethereum, lpAddress, tokenAddress, isTokenOnly])
+
+  const { onApprove } = useApprove(lpContract)
+
+  const handleApprove = useCallback(async () => {
+    try {
+      setRequestedApproval(true)
+      await onApprove()
+      setRequestedApproval(false)
+    } catch (e) {
+      console.error(e)
+    }
+  }, [onApprove])
+
+  const renderApprovalOrStakeButton = () => {
+    return isApproved ? (
+      <StakeAction
+        stakedBalance={stakedBalance}
+        tokenBalance={tokenBalance}
+        tokenName={lpName}
+        pid={pid}
+        depositFeeBP={depositFeeBP}
+      />
+    ) : (
+      <Button mt="8px" fullWidth disabled={requestedApproval} onClick={handleApprove}>
+        {farm.isTokenOnly ? 'Enable Pool' : 'Enable Farm'}
+      </Button>
+    )
+  }
+
+  return (
+    <Action>
+      {showMigrate ? (
+        <div>
+          <Flex>
+            <Text textTransform="uppercase" color="secondary" fontSize="18px" pr="3px">
+              LP IN V1
+            </Text>
+          </Flex>
+          {!account ? (
+            <UnlockButton mt="8px" fullWidth />
+          ) : (
+            <MigrationAction
+              stakedBalance={stakedBalanceV1}
+              tokenBalance={tokenBalance}
+              pid={pid}
+              handleApprove={handleApprove}
+              farm={farm}
+            />
+          )}
+        </div>
+      ) : (
+        <div>
+          <Flex>
+            <Text textTransform="uppercase" color="secondary" fontSize="18px" pr="3px">
+              {/* TODO: Is there a way to get a dynamic value here from useFarmFromSymbol? */}
+              ZM
+            </Text>
+            <Text textTransform="uppercase" color="secondary" fontSize="18px">
+              {TranslateString(999, 'Earned')}
+            </Text>
+          </Flex>
+          <HarvestAction earnings={earnings} pid={pid} />
+          <Flex>
+            <Text textTransform="uppercase" color="secondary" fontSize="18px" pr="3px">
+              {lpName}
+            </Text>
+            <Text textTransform="uppercase" color="secondary" fontSize="18px">
+              {TranslateString(999, 'Staked')}
+            </Text>
+          </Flex>
+          {!account ? <UnlockButton mt="8px" fullWidth /> : renderApprovalOrStakeButton()}
+        </div>
+      )}
+    </Action>
+  )
+}
+
+export default CardActions
